@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Integer and bignum arithmetic built from lookup tables, not primitive arithmetic"
 readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rot13maxi/cursed_arithmetic_rs"
 keywords = ["arbitrary-precision", "bignum", "arithmetic", "cursed"]
 categories = ["mathematics"]
 
