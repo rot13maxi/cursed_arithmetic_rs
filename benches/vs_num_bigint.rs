@@ -127,10 +127,13 @@ fn bench_case<W: criterion::measurement::Measurement, T>(
 
 const SIZES: [usize; 4] = [10, 100, 1_000, 10_000];
 
-/// Division at this size does not finish in acceptable bench time for
-/// `BigNum` (schoolbook long division by repeated subtraction); it is
-/// intentionally not benchmarked. See README "Performance Considerations".
-const DIV_MAX_SIZE: usize = 1_000;
+/// `BigNum` divides by repeated subtraction per quotient digit, so division
+/// at this size does not finish in acceptable bench time; it is intentionally
+/// not benchmarked. `num-bigint` uses Knuth division and handles this size,
+/// so it is benchmarked with a per-library size cap.
+const DIV_MAX_SIZE: [usize; 2] = [1_000, 10_000];
+const LIB_BIGNUM: usize = 0;
+const LIB_NUM_BIGINT: usize = 1;
 
 fn bench_all(c: &mut Criterion<WallTime>) {
     let mut group = c.benchmark_group("vs_num_bigint");
@@ -148,9 +151,12 @@ fn bench_all(c: &mut Criterion<WallTime>) {
         bench_case(&mut group, "bignum", "mul", digits, || cursed_mul(&ops));
         bench_case(&mut group, "num_bigint", "mul", digits, || num_mul(&ops));
 
-        if digits <= DIV_MAX_SIZE {
+        if digits <= DIV_MAX_SIZE[LIB_BIGNUM] {
             let div_ops = quotient_operands(digits);
             bench_case(&mut group, "bignum", "div", digits, || cursed_div(&div_ops));
+        }
+        if digits <= DIV_MAX_SIZE[LIB_NUM_BIGINT] {
+            let div_ops = quotient_operands(digits);
             bench_case(&mut group, "num_bigint", "div", digits, || {
                 num_div(&div_ops)
             });

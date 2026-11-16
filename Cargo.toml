@@ -20,4 +20,3 @@ simd = []
 [[bench]]
 name = "vs_num_bigint"
 harness = false
-required-features = ["simd"]
