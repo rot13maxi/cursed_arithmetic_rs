@@ -1,5 +1,6 @@
 //! Arbitrary-precision arithmetic where every digit is an enum variant, every
-//! number is a `Vec<Digit>`, and every digit operation is a lookup table.
+//! number is a linked list of digits, and every digit operation is a lookup
+//! table.
 //!
 //! This crate is a joke with a straight face. It implements schoolbook
 //! decimal arithmetic on [`BigNum`] without using primitive arithmetic to
@@ -11,12 +12,14 @@
 //! [`Digit::carrying_add`], [`Digit::borrowing_sub`], and
 //! [`Digit::carrying_mul`] are lookup tables. Big-number multiplication adds
 //! table-computed partial products; division uses table-driven subtraction and
-//! [`Digit::successor`]. `u128` conversion walks bits and uses a one-bit
-//! full-adder table.
+//! [`Digit::successor`]. Structural quantities — lengths, offsets, exponents,
+//! padding, and loop counters — are [`BigNum`]s too, wrapped in a cursed
+//! internal `Nat`.
 //!
-//! Structural index and length arithmetic still uses `usize`, and primitive
-//! integer types remain at the API boundary. Tests use primitive arithmetic as
-//! an independent oracle.
+//! The only primitive integer operations left are the machine boundary:
+//! converting API-boundary `usize`/`u128`/`u32` values to and from decimal
+//! strings, and the `usize` bookkeeping inside `Vec` and `Box` themselves.
+//! Tests use primitive arithmetic as an independent oracle.
 //!
 //! ```
 //! use cursed_arithmetic::{BigNum, Digit};
@@ -52,9 +55,9 @@
 //!
 //! # Representation
 //!
-//! [`BigNum`] stores digits most significant first, with no leading zeroes.
-//! Zero is `[Digit::Zero]`. Arithmetic is done exactly the way you did it on
-//! paper, carries and borrows included.
+//! [`BigNum`] stores digits most significant first in a singly linked list,
+//! with no leading zeroes. Zero is a single [`Digit::Zero`] node. Arithmetic
+//! is done exactly the way you did it on paper, carries and borrows included.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -63,7 +66,7 @@ mod arith;
 mod big_num;
 mod digit;
 mod extras;
-mod simd;
+mod nat;
 
-pub use big_num::{BigNum, ParseBigNumError};
+pub use big_num::{BigNum, Digits, IntoDigits, ParseBigNumError};
 pub use digit::{Digit, InvalidDigit, ParseDigitError};

@@ -1,6 +1,6 @@
 [package]
 name = "cursed_arithmetic"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Integer and bignum arithmetic built from lookup tables, not primitive arithmetic"
 readme = "README.md"
@@ -15,9 +15,6 @@ categories = ["mathematics"]
 criterion = "0.7"
 num-bigint = "0.4"
 
-[features]
-default = ["simd"]
-simd = []
 
 [[bench]]
 name = "vs_num_bigint"

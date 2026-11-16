@@ -1,135 +1,12 @@
-//! Schoolbook arithmetic on decimal digits.
+//! Schoolbook arithmetic on linked decimal digits.
 
-use crate::big_num::{BigNum, cmp_digits, normalize_vec, trimmed};
-use crate::digit::Digit;
-use std::cmp::Ordering;
+use crate::big_num::{self, BigNum};
+use crate::nat::Nat;
 use std::iter::{Product, Sum};
 use std::ops::{
     Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign,
     Sub, SubAssign,
 };
-
-pub(crate) fn add_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
-    if let Some(wide) = crate::simd::simd_add(lhs, rhs) {
-        return wide;
-    }
-
-    let mut out = Vec::with_capacity(lhs.len().max(rhs.len()) + 1);
-    let mut lhs_iter = lhs.iter().rev();
-    let mut rhs_iter = rhs.iter().rev();
-    let mut carry = false;
-
-    loop {
-        let lhs_digit = lhs_iter.next().copied();
-        let rhs_digit = rhs_iter.next().copied();
-        if lhs_digit.is_none() && rhs_digit.is_none() && !carry {
-            break;
-        }
-
-        let (digit, next_carry) = lhs_digit
-            .unwrap_or(Digit::Zero)
-            .carrying_add(rhs_digit.unwrap_or(Digit::Zero), carry);
-        out.push(digit);
-        carry = next_carry;
-    }
-
-    out.reverse();
-    out
-}
-
-pub(crate) fn checked_sub_digits(lhs: &[Digit], rhs: &[Digit]) -> Option<Vec<Digit>> {
-    if cmp_digits(lhs, rhs) == Ordering::Less {
-        return None;
-    }
-
-    if let Some(wide) = crate::simd::simd_sub(lhs, rhs) {
-        return Some(wide);
-    }
-
-    let mut out = Vec::with_capacity(lhs.len());
-    let mut rhs_iter = rhs.iter().rev();
-    let mut borrow = false;
-
-    for lhs_digit in lhs.iter().rev() {
-        let rhs_digit = rhs_iter.next().copied().unwrap_or(Digit::Zero);
-        let (digit, next_borrow) = lhs_digit.borrowing_sub(rhs_digit, borrow);
-        out.push(digit);
-        borrow = next_borrow;
-    }
-
-    debug_assert!(!borrow);
-    out.reverse();
-    Some(normalize_vec(out))
-}
-
-pub(crate) fn sub_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
-    checked_sub_digits(lhs, rhs).unwrap_or_else(|| panic!("attempt to subtract with overflow"))
-}
-
-fn add_digit_at(digits: &mut [Digit], mut index: usize, digit: Digit) {
-    let mut carry = digit;
-    loop {
-        let (sum, overflow) = digits[index].carrying_add(carry, false);
-        digits[index] = sum;
-        if !overflow {
-            break;
-        }
-        carry = Digit::One;
-        index += 1;
-        assert!(
-            index < digits.len(),
-            "multiplication overflowed its result buffer"
-        );
-    }
-}
-
-pub(crate) fn mul_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
-    if trimmed(lhs).is_empty() || trimmed(rhs).is_empty() {
-        return vec![Digit::Zero];
-    }
-
-    if let Some(wide) = crate::simd::simd_mul(lhs, rhs) {
-        return wide;
-    }
-
-    let mut result = vec![Digit::Zero; lhs.len() + rhs.len() + 1];
-    for (i, lhs_digit) in lhs.iter().rev().enumerate() {
-        for (j, rhs_digit) in rhs.iter().rev().enumerate() {
-            let (units, carry) = lhs_digit.carrying_mul(*rhs_digit);
-            add_digit_at(&mut result, i + j, units);
-            add_digit_at(&mut result, i + j + 1, carry);
-        }
-    }
-
-    result.reverse();
-    normalize_vec(result)
-}
-
-pub(crate) fn div_rem_digits(dividend: &[Digit], divisor: &[Digit]) -> (Vec<Digit>, Vec<Digit>) {
-    assert!(!trimmed(divisor).is_empty(), "attempt to divide by zero");
-
-    let mut quotient = Vec::with_capacity(dividend.len());
-    let mut remainder = vec![Digit::Zero];
-
-    for &digit in dividend {
-        if remainder.len() == 1 && remainder[0] == Digit::Zero {
-            remainder[0] = digit;
-        } else {
-            remainder.push(digit);
-        }
-
-        let mut quotient_digit = Digit::Zero;
-        while cmp_digits(&remainder, divisor) != Ordering::Less {
-            remainder = checked_sub_digits(&remainder, divisor)
-                .expect("the remainder is at least the divisor");
-            quotient_digit = quotient_digit.successor();
-        }
-
-        quotient.push(quotient_digit);
-    }
-
-    (normalize_vec(quotient), normalize_vec(remainder))
-}
 
 impl BigNum {
     /// Returns the quotient and remainder of `self / rhs`.
@@ -138,16 +15,12 @@ impl BigNum {
     ///
     /// Panics if `rhs` is zero.
     pub fn div_rem(&self, rhs: &Self) -> (Self, Self) {
-        let (quotient, remainder) = div_rem_digits(self.digits(), rhs.digits());
-        (
-            BigNum::from_digits(quotient),
-            BigNum::from_digits(remainder),
-        )
+        big_num::div_rem(self, rhs)
     }
 
     /// Checked subtraction. Returns `None` on underflow.
     pub fn checked_sub(&self, rhs: &Self) -> Option<Self> {
-        checked_sub_digits(self.digits(), rhs.digits()).map(BigNum::from_digits)
+        big_num::checked_sub(self, rhs)
     }
 
     /// Checked division. Returns `None` when `rhs` is zero.
@@ -170,23 +43,12 @@ impl BigNum {
 
     /// Multiplies by `10^n` by appending `n` zero digits.
     pub fn mul_pow10(&self, n: usize) -> Self {
-        if self.is_zero() || n == 0 {
-            return self.clone();
-        }
-
-        let mut digits = self.digits().to_vec();
-        digits.resize(digits.len() + n, Digit::Zero);
-        BigNum::from_digits(digits)
+        self.mul_pow10_nat(&Nat::from_usize(n))
     }
 
     /// Divides by `10^n` by dropping `n` least-significant digits.
     pub fn div_pow10(&self, n: usize) -> Self {
-        let len = self.digits().len();
-        if n >= len {
-            BigNum::zero()
-        } else {
-            BigNum::from_digits(self.digits()[..len - n].iter().copied())
-        }
+        self.div_pow10_nat(&Nat::from_usize(n))
     }
 }
 
@@ -194,7 +56,7 @@ impl Add for BigNum {
     type Output = BigNum;
 
     fn add(self, rhs: BigNum) -> BigNum {
-        BigNum::from_digits(add_digits(self.digits(), rhs.digits()))
+        big_num::add_owned(self, rhs)
     }
 }
 
@@ -205,7 +67,7 @@ impl Sub for BigNum {
     ///
     /// Panics if `rhs` is larger than `self`.
     fn sub(self, rhs: BigNum) -> BigNum {
-        BigNum::from_digits(sub_digits(self.digits(), rhs.digits()))
+        big_num::sub_owned(self, rhs).unwrap_or_else(|| panic!("attempt to subtract with overflow"))
     }
 }
 
@@ -213,7 +75,7 @@ impl Mul for BigNum {
     type Output = BigNum;
 
     fn mul(self, rhs: BigNum) -> BigNum {
-        BigNum::from_digits(mul_digits(self.digits(), rhs.digits()))
+        big_num::mul_owned(self, rhs)
     }
 }
 
@@ -224,7 +86,7 @@ impl Div for BigNum {
     ///
     /// Panics if `rhs` is zero.
     fn div(self, rhs: BigNum) -> BigNum {
-        self.div_rem(&rhs).0
+        big_num::div_rem_owned(self, rhs).0
     }
 }
 
@@ -235,37 +97,38 @@ impl Rem for BigNum {
     ///
     /// Panics if `rhs` is zero.
     fn rem(self, rhs: BigNum) -> BigNum {
-        self.div_rem(&rhs).1
+        big_num::div_rem_owned(self, rhs).1
     }
 }
 
 impl AddAssign for BigNum {
     fn add_assign(&mut self, rhs: BigNum) {
-        *self = BigNum::from_digits(add_digits(self.digits(), rhs.digits()));
+        *self = big_num::add_owned(std::mem::take(self), rhs);
     }
 }
 
 impl SubAssign for BigNum {
     fn sub_assign(&mut self, rhs: BigNum) {
-        *self = BigNum::from_digits(sub_digits(self.digits(), rhs.digits()));
+        *self = big_num::sub_owned(std::mem::take(self), rhs)
+            .unwrap_or_else(|| panic!("attempt to subtract with overflow"));
     }
 }
 
 impl MulAssign for BigNum {
     fn mul_assign(&mut self, rhs: BigNum) {
-        *self = BigNum::from_digits(mul_digits(self.digits(), rhs.digits()));
+        *self = big_num::mul_owned(std::mem::take(self), rhs);
     }
 }
 
 impl DivAssign for BigNum {
     fn div_assign(&mut self, rhs: BigNum) {
-        *self = self.div_rem(&rhs).0;
+        *self = big_num::div_rem_owned(std::mem::take(self), rhs).0;
     }
 }
 
 impl RemAssign for BigNum {
     fn rem_assign(&mut self, rhs: BigNum) {
-        *self = self.div_rem(&rhs).1;
+        *self = big_num::div_rem_owned(std::mem::take(self), rhs).1;
     }
 }
 
