@@ -35,402 +35,57 @@ pub enum Digit {
 
 use Digit::*;
 
-/// Addition without an incoming carry.
-///
-/// Indexed by the two digit values. Each entry is `(result, carry)`.
-pub(crate) const ADD_TABLE: [[(Digit, bool); 10]; 10] = [
-    [
-        (Zero, false),
-        (One, false),
-        (Two, false),
-        (Three, false),
-        (Four, false),
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-    ],
-    [
-        (One, false),
-        (Two, false),
-        (Three, false),
-        (Four, false),
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-    ],
-    [
-        (Two, false),
-        (Three, false),
-        (Four, false),
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-    ],
-    [
-        (Three, false),
-        (Four, false),
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-    ],
-    [
-        (Four, false),
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-    ],
-    [
-        (Five, false),
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-        (Four, true),
-    ],
-    [
-        (Six, false),
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-        (Four, true),
-        (Five, true),
-    ],
-    [
-        (Seven, false),
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-        (Four, true),
-        (Five, true),
-        (Six, true),
-    ],
-    [
-        (Eight, false),
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-        (Four, true),
-        (Five, true),
-        (Six, true),
-        (Seven, true),
-    ],
-    [
-        (Nine, false),
-        (Zero, true),
-        (One, true),
-        (Two, true),
-        (Three, true),
-        (Four, true),
-        (Five, true),
-        (Six, true),
-        (Seven, true),
-        (Eight, true),
-    ],
-];
+/// Expands a 10×10 table of digit results into an exhaustive `match`.
+macro_rules! digit_table {
+    ($name:ident, $ret:ty, $($row:ident: [$(($col:ident, $a:ident, $b:ident)),* $(,)?]),* $(,)?) => {
+        pub(crate) const fn $name(lhs: Digit, rhs: Digit) -> $ret {
+            match lhs {
+                $( Digit::$row => match rhs {
+                    $( Digit::$col => ($a, $b), )*
+                }, )*
+            }
+        }
+    };
+}
 
-/// Subtraction without an incoming borrow.
-///
-/// Indexed by the two digit values. Each entry is `(result, borrow)`.
-pub(crate) const SUB_TABLE: [[(Digit, bool); 10]; 10] = [
-    [
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-        (Five, true),
-        (Four, true),
-        (Three, true),
-        (Two, true),
-        (One, true),
-    ],
-    [
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-        (Five, true),
-        (Four, true),
-        (Three, true),
-        (Two, true),
-    ],
-    [
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-        (Five, true),
-        (Four, true),
-        (Three, true),
-    ],
-    [
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-        (Five, true),
-        (Four, true),
-    ],
-    [
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-        (Five, true),
-    ],
-    [
-        (Five, false),
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-        (Six, true),
-    ],
-    [
-        (Six, false),
-        (Five, false),
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-        (Seven, true),
-    ],
-    [
-        (Seven, false),
-        (Six, false),
-        (Five, false),
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-        (Eight, true),
-    ],
-    [
-        (Eight, false),
-        (Seven, false),
-        (Six, false),
-        (Five, false),
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-        (Nine, true),
-    ],
-    [
-        (Nine, false),
-        (Eight, false),
-        (Seven, false),
-        (Six, false),
-        (Five, false),
-        (Four, false),
-        (Three, false),
-        (Two, false),
-        (One, false),
-        (Zero, false),
-    ],
-];
+digit_table!(add_table, (Digit, bool),
+    Zero: [(Zero, Zero, false), (One, One, false), (Two, Two, false), (Three, Three, false), (Four, Four, false), (Five, Five, false), (Six, Six, false), (Seven, Seven, false), (Eight, Eight, false), (Nine, Nine, false)],
+    One: [(Zero, One, false), (One, Two, false), (Two, Three, false), (Three, Four, false), (Four, Five, false), (Five, Six, false), (Six, Seven, false), (Seven, Eight, false), (Eight, Nine, false), (Nine, Zero, true)],
+    Two: [(Zero, Two, false), (One, Three, false), (Two, Four, false), (Three, Five, false), (Four, Six, false), (Five, Seven, false), (Six, Eight, false), (Seven, Nine, false), (Eight, Zero, true), (Nine, One, true)],
+    Three: [(Zero, Three, false), (One, Four, false), (Two, Five, false), (Three, Six, false), (Four, Seven, false), (Five, Eight, false), (Six, Nine, false), (Seven, Zero, true), (Eight, One, true), (Nine, Two, true)],
+    Four: [(Zero, Four, false), (One, Five, false), (Two, Six, false), (Three, Seven, false), (Four, Eight, false), (Five, Nine, false), (Six, Zero, true), (Seven, One, true), (Eight, Two, true), (Nine, Three, true)],
+    Five: [(Zero, Five, false), (One, Six, false), (Two, Seven, false), (Three, Eight, false), (Four, Nine, false), (Five, Zero, true), (Six, One, true), (Seven, Two, true), (Eight, Three, true), (Nine, Four, true)],
+    Six: [(Zero, Six, false), (One, Seven, false), (Two, Eight, false), (Three, Nine, false), (Four, Zero, true), (Five, One, true), (Six, Two, true), (Seven, Three, true), (Eight, Four, true), (Nine, Five, true)],
+    Seven: [(Zero, Seven, false), (One, Eight, false), (Two, Nine, false), (Three, Zero, true), (Four, One, true), (Five, Two, true), (Six, Three, true), (Seven, Four, true), (Eight, Five, true), (Nine, Six, true)],
+    Eight: [(Zero, Eight, false), (One, Nine, false), (Two, Zero, true), (Three, One, true), (Four, Two, true), (Five, Three, true), (Six, Four, true), (Seven, Five, true), (Eight, Six, true), (Nine, Seven, true)],
+    Nine: [(Zero, Nine, false), (One, Zero, true), (Two, One, true), (Three, Two, true), (Four, Three, true), (Five, Four, true), (Six, Five, true), (Seven, Six, true), (Eight, Seven, true), (Nine, Eight, true)],
+);
 
-/// Multiplication without an incoming carry.
-///
-/// Indexed by the two digit values. Each entry is `(units, carry)`.
-pub(crate) const MUL_TABLE: [[(Digit, Digit); 10]; 10] = [
-    [
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-        (Zero, Zero),
-    ],
-    [
-        (Zero, Zero),
-        (One, Zero),
-        (Two, Zero),
-        (Three, Zero),
-        (Four, Zero),
-        (Five, Zero),
-        (Six, Zero),
-        (Seven, Zero),
-        (Eight, Zero),
-        (Nine, Zero),
-    ],
-    [
-        (Zero, Zero),
-        (Two, Zero),
-        (Four, Zero),
-        (Six, Zero),
-        (Eight, Zero),
-        (Zero, One),
-        (Two, One),
-        (Four, One),
-        (Six, One),
-        (Eight, One),
-    ],
-    [
-        (Zero, Zero),
-        (Three, Zero),
-        (Six, Zero),
-        (Nine, Zero),
-        (Two, One),
-        (Five, One),
-        (Eight, One),
-        (One, Two),
-        (Four, Two),
-        (Seven, Two),
-    ],
-    [
-        (Zero, Zero),
-        (Four, Zero),
-        (Eight, Zero),
-        (Two, One),
-        (Six, One),
-        (Zero, Two),
-        (Four, Two),
-        (Eight, Two),
-        (Two, Three),
-        (Six, Three),
-    ],
-    [
-        (Zero, Zero),
-        (Five, Zero),
-        (Zero, One),
-        (Five, One),
-        (Zero, Two),
-        (Five, Two),
-        (Zero, Three),
-        (Five, Three),
-        (Zero, Four),
-        (Five, Four),
-    ],
-    [
-        (Zero, Zero),
-        (Six, Zero),
-        (Two, One),
-        (Eight, One),
-        (Four, Two),
-        (Zero, Three),
-        (Six, Three),
-        (Two, Four),
-        (Eight, Four),
-        (Four, Five),
-    ],
-    [
-        (Zero, Zero),
-        (Seven, Zero),
-        (Four, One),
-        (One, Two),
-        (Eight, Two),
-        (Five, Three),
-        (Two, Four),
-        (Nine, Four),
-        (Six, Five),
-        (Three, Six),
-    ],
-    [
-        (Zero, Zero),
-        (Eight, Zero),
-        (Six, One),
-        (Four, Two),
-        (Two, Three),
-        (Zero, Four),
-        (Eight, Four),
-        (Six, Five),
-        (Four, Six),
-        (Two, Seven),
-    ],
-    [
-        (Zero, Zero),
-        (Nine, Zero),
-        (Eight, One),
-        (Seven, Two),
-        (Six, Three),
-        (Five, Four),
-        (Four, Five),
-        (Three, Six),
-        (Two, Seven),
-        (One, Eight),
-    ],
-];
+digit_table!(sub_table, (Digit, bool),
+    Zero: [(Zero, Zero, false), (One, Nine, true), (Two, Eight, true), (Three, Seven, true), (Four, Six, true), (Five, Five, true), (Six, Four, true), (Seven, Three, true), (Eight, Two, true), (Nine, One, true)],
+    One: [(Zero, One, false), (One, Zero, false), (Two, Nine, true), (Three, Eight, true), (Four, Seven, true), (Five, Six, true), (Six, Five, true), (Seven, Four, true), (Eight, Three, true), (Nine, Two, true)],
+    Two: [(Zero, Two, false), (One, One, false), (Two, Zero, false), (Three, Nine, true), (Four, Eight, true), (Five, Seven, true), (Six, Six, true), (Seven, Five, true), (Eight, Four, true), (Nine, Three, true)],
+    Three: [(Zero, Three, false), (One, Two, false), (Two, One, false), (Three, Zero, false), (Four, Nine, true), (Five, Eight, true), (Six, Seven, true), (Seven, Six, true), (Eight, Five, true), (Nine, Four, true)],
+    Four: [(Zero, Four, false), (One, Three, false), (Two, Two, false), (Three, One, false), (Four, Zero, false), (Five, Nine, true), (Six, Eight, true), (Seven, Seven, true), (Eight, Six, true), (Nine, Five, true)],
+    Five: [(Zero, Five, false), (One, Four, false), (Two, Three, false), (Three, Two, false), (Four, One, false), (Five, Zero, false), (Six, Nine, true), (Seven, Eight, true), (Eight, Seven, true), (Nine, Six, true)],
+    Six: [(Zero, Six, false), (One, Five, false), (Two, Four, false), (Three, Three, false), (Four, Two, false), (Five, One, false), (Six, Zero, false), (Seven, Nine, true), (Eight, Eight, true), (Nine, Seven, true)],
+    Seven: [(Zero, Seven, false), (One, Six, false), (Two, Five, false), (Three, Four, false), (Four, Three, false), (Five, Two, false), (Six, One, false), (Seven, Zero, false), (Eight, Nine, true), (Nine, Eight, true)],
+    Eight: [(Zero, Eight, false), (One, Seven, false), (Two, Six, false), (Three, Five, false), (Four, Four, false), (Five, Three, false), (Six, Two, false), (Seven, One, false), (Eight, Zero, false), (Nine, Nine, true)],
+    Nine: [(Zero, Nine, false), (One, Eight, false), (Two, Seven, false), (Three, Six, false), (Four, Five, false), (Five, Four, false), (Six, Three, false), (Seven, Two, false), (Eight, One, false), (Nine, Zero, false)],
+);
 
-const NEXT_DIGIT: [Digit; 10] = [
-    Digit::One,
-    Digit::Two,
-    Digit::Three,
-    Digit::Four,
-    Digit::Five,
-    Digit::Six,
-    Digit::Seven,
-    Digit::Eight,
-    Digit::Nine,
-    Digit::Zero,
-];
-
-const DIGIT_CHARS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-
-const PARITY: [bool; 10] = [
-    true, false, true, false, true, false, true, false, true, false,
-];
+digit_table!(mul_table, (Digit, Digit),
+    Zero: [(Zero, Zero, Zero), (One, Zero, Zero), (Two, Zero, Zero), (Three, Zero, Zero), (Four, Zero, Zero), (Five, Zero, Zero), (Six, Zero, Zero), (Seven, Zero, Zero), (Eight, Zero, Zero), (Nine, Zero, Zero)],
+    One: [(Zero, Zero, Zero), (One, One, Zero), (Two, Two, Zero), (Three, Three, Zero), (Four, Four, Zero), (Five, Five, Zero), (Six, Six, Zero), (Seven, Seven, Zero), (Eight, Eight, Zero), (Nine, Nine, Zero)],
+    Two: [(Zero, Zero, Zero), (One, Two, Zero), (Two, Four, Zero), (Three, Six, Zero), (Four, Eight, Zero), (Five, Zero, One), (Six, Two, One), (Seven, Four, One), (Eight, Six, One), (Nine, Eight, One)],
+    Three: [(Zero, Zero, Zero), (One, Three, Zero), (Two, Six, Zero), (Three, Nine, Zero), (Four, Two, One), (Five, Five, One), (Six, Eight, One), (Seven, One, Two), (Eight, Four, Two), (Nine, Seven, Two)],
+    Four: [(Zero, Zero, Zero), (One, Four, Zero), (Two, Eight, Zero), (Three, Two, One), (Four, Six, One), (Five, Zero, Two), (Six, Four, Two), (Seven, Eight, Two), (Eight, Two, Three), (Nine, Six, Three)],
+    Five: [(Zero, Zero, Zero), (One, Five, Zero), (Two, Zero, One), (Three, Five, One), (Four, Zero, Two), (Five, Five, Two), (Six, Zero, Three), (Seven, Five, Three), (Eight, Zero, Four), (Nine, Five, Four)],
+    Six: [(Zero, Zero, Zero), (One, Six, Zero), (Two, Two, One), (Three, Eight, One), (Four, Four, Two), (Five, Zero, Three), (Six, Six, Three), (Seven, Two, Four), (Eight, Eight, Four), (Nine, Four, Five)],
+    Seven: [(Zero, Zero, Zero), (One, Seven, Zero), (Two, Four, One), (Three, One, Two), (Four, Eight, Two), (Five, Five, Three), (Six, Two, Four), (Seven, Nine, Four), (Eight, Six, Five), (Nine, Three, Six)],
+    Eight: [(Zero, Zero, Zero), (One, Eight, Zero), (Two, Six, One), (Three, Four, Two), (Four, Two, Three), (Five, Zero, Four), (Six, Eight, Four), (Seven, Six, Five), (Eight, Four, Six), (Nine, Two, Seven)],
+    Nine: [(Zero, Zero, Zero), (One, Nine, Zero), (Two, Eight, One), (Three, Seven, Two), (Four, Six, Three), (Five, Five, Four), (Six, Four, Five), (Seven, Three, Six), (Eight, Two, Seven), (Nine, One, Eight)],
+);
 
 impl Digit {
     /// Every digit, in ascending order.
@@ -449,7 +104,18 @@ impl Digit {
 
     /// The numeric value of this digit.
     pub const fn value(self) -> u8 {
-        self as u8
+        match self {
+            Zero => 0,
+            One => 1,
+            Two => 2,
+            Three => 3,
+            Four => 4,
+            Five => 5,
+            Six => 6,
+            Seven => 7,
+            Eight => 8,
+            Nine => 9,
+        }
     }
 
     /// Returns the digit with the given numeric value, if it exists.
@@ -488,18 +154,26 @@ impl Digit {
 
     /// This digit as a `char`.
     pub const fn to_char(self) -> char {
-        DIGIT_CHARS[self as usize]
+        match self {
+            Zero => '0',
+            One => '1',
+            Two => '2',
+            Three => '3',
+            Four => '4',
+            Five => '5',
+            Six => '6',
+            Seven => '7',
+            Eight => '8',
+            Nine => '9',
+        }
     }
 
     /// Adds two digits plus an incoming carry, returning the result digit and
     /// the outgoing carry.
-    ///
-    /// The result comes from the addition lookup table; no primitive addition
-    /// is performed.
     pub const fn carrying_add(self, rhs: Self, carry: bool) -> (Self, bool) {
-        let (sum, carry_out) = ADD_TABLE[self as usize][rhs as usize];
+        let (sum, carry_out) = add_table(self, rhs);
         if carry {
-            let (sum, carry_from_one) = ADD_TABLE[sum as usize][Digit::One as usize];
+            let (sum, carry_from_one) = add_table(sum, One);
             (sum, carry_out || carry_from_one)
         } else {
             (sum, carry_out)
@@ -508,13 +182,10 @@ impl Digit {
 
     /// Subtracts two digits and an incoming borrow, returning the result digit
     /// and the outgoing borrow.
-    ///
-    /// The result comes from the subtraction lookup table; no primitive
-    /// subtraction is performed.
     pub const fn borrowing_sub(self, rhs: Self, borrow: bool) -> (Self, bool) {
-        let (difference, borrow_out) = SUB_TABLE[self as usize][rhs as usize];
+        let (difference, borrow_out) = sub_table(self, rhs);
         if borrow {
-            let (difference, borrow_from_one) = SUB_TABLE[difference as usize][Digit::One as usize];
+            let (difference, borrow_from_one) = sub_table(difference, One);
             (difference, borrow_out || borrow_from_one)
         } else {
             (difference, borrow_out)
@@ -522,58 +193,69 @@ impl Digit {
     }
 
     /// Multiplies two digits, returning `(units, carry)`.
-    ///
-    /// The result comes from the multiplication lookup table; no primitive
-    /// multiplication is performed.
     pub const fn carrying_mul(self, rhs: Self) -> (Self, Self) {
-        MUL_TABLE[self as usize][rhs as usize]
+        mul_table(self, rhs)
     }
 
     /// Checked digit addition.
     pub const fn checked_add(self, rhs: Self) -> Option<Self> {
-        let (sum, carry) = ADD_TABLE[self as usize][rhs as usize];
+        let (sum, carry) = add_table(self, rhs);
         if carry { None } else { Some(sum) }
     }
 
     /// Checked digit subtraction.
     pub const fn checked_sub(self, rhs: Self) -> Option<Self> {
-        let (difference, borrow) = SUB_TABLE[self as usize][rhs as usize];
+        let (difference, borrow) = sub_table(self, rhs);
         if borrow { None } else { Some(difference) }
     }
 
     /// Checked digit multiplication. Returns `None` when the product exceeds
     /// nine.
     pub const fn checked_mul(self, rhs: Self) -> Option<Self> {
-        let (units, carry) = MUL_TABLE[self as usize][rhs as usize];
+        let (units, carry) = mul_table(self, rhs);
         match carry {
-            Digit::Zero => Some(units),
+            Zero => Some(units),
             _ => None,
         }
     }
 
     /// Digit addition modulo ten.
     pub const fn wrapping_add(self, rhs: Self) -> Self {
-        ADD_TABLE[self as usize][rhs as usize].0
+        add_table(self, rhs).0
     }
 
     /// Digit subtraction modulo ten.
     pub const fn wrapping_sub(self, rhs: Self) -> Self {
-        SUB_TABLE[self as usize][rhs as usize].0
+        sub_table(self, rhs).0
     }
 
     /// Digit multiplication modulo ten.
     pub const fn wrapping_mul(self, rhs: Self) -> Self {
-        MUL_TABLE[self as usize][rhs as usize].0
+        mul_table(self, rhs).0
     }
 
     /// The next digit, wrapping from nine back to zero.
     pub const fn successor(self) -> Self {
-        NEXT_DIGIT[self as usize]
+        match self {
+            Zero => One,
+            One => Two,
+            Two => Three,
+            Three => Four,
+            Four => Five,
+            Five => Six,
+            Six => Seven,
+            Seven => Eight,
+            Eight => Nine,
+            Nine => Zero,
+        }
     }
 
     /// Whether this digit is even.
     pub const fn is_even(self) -> bool {
-        PARITY[self as usize]
+        match self {
+            Zero | Two | Four | Six | Eight => true,
+            One | Three | Five | Seven | Nine => false,
+        }
     }
 
     /// Whether this digit is odd.
@@ -634,7 +316,7 @@ impl TryFrom<char> for Digit {
 
     fn try_from(value: char) -> Result<Self, Self::Error> {
         Self::from_char(value).ok_or(InvalidDigit {
-            value: value as u32,
+            value: u32::from(value),
         })
     }
 }

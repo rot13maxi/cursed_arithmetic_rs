@@ -1,221 +1,491 @@
 //! The arbitrary-precision decimal number type.
+//!
+//! Digits live in a singly linked list, most significant first. There are no
+//! slices, no indices, and no length arithmetic: every traversal is a pointer
+//! walk, and every structural count is a cursed [`Nat`].
 
 use crate::digit::Digit;
+use crate::nat::Nat;
 use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 use std::str::FromStr;
 
-/// An arbitrary-precision non-negative integer stored as a big-endian
-/// `Vec<Digit>`.
+/// An arbitrary-precision non-negative integer stored as a linked list of
+/// decimal digits, most significant first.
 ///
 /// The representation is normalized: there are no leading zeroes, and zero is
-/// represented as `[Digit::Zero]`.
+/// a single [`Digit::Zero`] node.
 ///
 /// ```
 /// use cursed_arithmetic::{BigNum, Digit};
 ///
 /// let n = BigNum::from_digits([Digit::One, Digit::Two, Digit::Three]);
 /// assert_eq!(n.to_string(), "123");
-/// assert_eq!(n.digits(), &[Digit::One, Digit::Two, Digit::Three]);
 /// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct BigNum(Vec<Digit>);
+pub struct BigNum(Option<Box<Node>>);
 
-pub(crate) fn normalize_vec(digits: Vec<Digit>) -> Vec<Digit> {
-    let first_nonzero = digits.iter().position(|digit| *digit != Digit::Zero);
-    match first_nonzero {
-        Some(index) => {
-            let mut digits = digits;
-            digits.drain(..index);
-            digits
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Node {
+    digit: Digit,
+    next: Option<Box<Node>>,
+}
+
+fn cons(digit: Digit, next: Option<Box<Node>>) -> Option<Box<Node>> {
+    Some(Box::new(Node { digit, next }))
+}
+
+fn zero_cons() -> Option<Box<Node>> {
+    cons(Digit::Zero, None)
+}
+
+fn is_zero_list(head: &Option<Box<Node>>) -> bool {
+    match head {
+        Some(node) => node.digit == Digit::Zero && node.next.is_none(),
+        None => true,
+    }
+}
+
+fn normalize(head: Option<Box<Node>>) -> BigNum {
+    let mut head = head;
+    loop {
+        match head {
+            Some(node) if node.digit == Digit::Zero && node.next.is_some() => {
+                let Node { next, .. } = *node;
+                head = next;
+            }
+            Some(node) => return BigNum(Some(node)),
+            None => return BigNum(zero_cons()),
         }
-        None => vec![Digit::Zero],
     }
 }
 
-pub(crate) fn trimmed(digits: &[Digit]) -> &[Digit] {
-    let start = digits
-        .iter()
-        .position(|digit| *digit != Digit::Zero)
-        .unwrap_or(digits.len());
-    &digits[start..]
+fn reverse(mut head: Option<Box<Node>>) -> Option<Box<Node>> {
+    let mut previous = None;
+    while let Some(mut node) = head {
+        head = node.next.take();
+        node.next = previous;
+        previous = Some(node);
+    }
+    previous
 }
 
-pub(crate) fn cmp_digits(lhs: &[Digit], rhs: &[Digit]) -> Ordering {
-    let lhs = trimmed(lhs);
-    let rhs = trimmed(rhs);
-    lhs.len().cmp(&rhs.len()).then_with(|| lhs.cmp(rhs))
-}
-
-/// One-bit addition, encoded as a lookup table.
-const fn full_adder(lhs: bool, rhs: bool, carry: bool) -> (bool, bool) {
-    match (lhs, rhs, carry) {
-        (false, false, false) => (false, false),
-        (false, false, true) => (true, false),
-        (false, true, false) => (true, false),
-        (false, true, true) => (false, true),
-        (true, false, false) => (true, false),
-        (true, false, true) => (false, true),
-        (true, true, false) => (false, true),
-        (true, true, true) => (true, true),
+fn append(head: Option<Box<Node>>, digit: Digit) -> Option<Box<Node>> {
+    match head {
+        None => cons(digit, None),
+        Some(mut head) => {
+            let mut cursor: &mut Node = &mut head;
+            loop {
+                match cursor.next {
+                    Some(ref mut next) => cursor = next,
+                    None => {
+                        cursor.next = cons(digit, None);
+                        break;
+                    }
+                }
+            }
+            Some(head)
+        }
     }
 }
 
-/// Adds two `u128`s one bit at a time, without using primitive addition.
-fn add_u128(lhs: u128, rhs: u128) -> (u128, bool) {
-    let mut result = 0u128;
+fn append_list(head: Option<Box<Node>>, tail: Option<Box<Node>>) -> Option<Box<Node>> {
+    match head {
+        None => tail,
+        Some(mut head) => {
+            let mut cursor: &mut Node = &mut head;
+            loop {
+                match cursor.next {
+                    Some(ref mut next) => cursor = next,
+                    None => {
+                        cursor.next = tail;
+                        break;
+                    }
+                }
+            }
+            Some(head)
+        }
+    }
+}
+
+fn cmp_lists(lhs: &Option<Box<Node>>, rhs: &Option<Box<Node>>) -> Ordering {
+    let mut lhs = lhs.as_deref();
+    let mut rhs = rhs.as_deref();
+    let mut ordering = Ordering::Equal;
+
+    loop {
+        match (lhs, rhs) {
+            (None, None) => return ordering,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(lhs_node), Some(rhs_node)) => {
+                if ordering == Ordering::Equal {
+                    ordering = lhs_node.digit.cmp(&rhs_node.digit);
+                }
+                lhs = lhs_node.next.as_deref();
+                rhs = rhs_node.next.as_deref();
+            }
+        }
+    }
+}
+
+fn add_lsd(mut lhs: Option<Box<Node>>, mut rhs: Option<Box<Node>>) -> Option<Box<Node>> {
     let mut carry = false;
+    let mut out = None;
 
-    for bit in 0..128 {
-        let lhs_bit = (lhs >> bit) & 1 == 1;
-        let rhs_bit = (rhs >> bit) & 1 == 1;
-        let (sum, next_carry) = full_adder(lhs_bit, rhs_bit, carry);
-        if sum {
-            result |= 1u128 << bit;
+    loop {
+        if lhs.is_none() && rhs.is_none() && !carry {
+            break;
         }
+
+        let (lhs_digit, lhs_next) = match lhs {
+            Some(node) => {
+                let Node { digit, next } = *node;
+                (digit, next)
+            }
+            None => (Digit::Zero, None),
+        };
+        lhs = lhs_next;
+
+        let (rhs_digit, rhs_next) = match rhs {
+            Some(node) => {
+                let Node { digit, next } = *node;
+                (digit, next)
+            }
+            None => (Digit::Zero, None),
+        };
+        rhs = rhs_next;
+
+        let (sum, next_carry) = lhs_digit.carrying_add(rhs_digit, carry);
+        out = cons(sum, out);
         carry = next_carry;
     }
 
-    (result, carry)
+    out
 }
 
-/// Multiplies a `u128` by ten using shifts and the bitwise adder.
-fn mul10(value: u128) -> Option<u128> {
-    if value >> 125 != 0 {
+pub(crate) fn add_owned(lhs: BigNum, rhs: BigNum) -> BigNum {
+    let sum = add_lsd(reverse(lhs.0), reverse(rhs.0));
+    normalize(sum)
+}
+
+fn sub_lsd(mut lhs: Option<Box<Node>>, mut rhs: Option<Box<Node>>) -> Option<Option<Box<Node>>> {
+    let mut borrow = false;
+    let mut out = None;
+
+    loop {
+        if lhs.is_none() && rhs.is_none() && !borrow {
+            break;
+        }
+
+        let (lhs_digit, lhs_next) = match lhs {
+            Some(node) => {
+                let Node { digit, next } = *node;
+                (digit, next)
+            }
+            None => (Digit::Zero, None),
+        };
+        lhs = lhs_next;
+
+        let (rhs_digit, rhs_next) = match rhs {
+            Some(node) => {
+                let Node { digit, next } = *node;
+                (digit, next)
+            }
+            None => (Digit::Zero, None),
+        };
+        rhs = rhs_next;
+
+        let (difference, next_borrow) = lhs_digit.borrowing_sub(rhs_digit, borrow);
+        out = cons(difference, out);
+        borrow = next_borrow;
+    }
+
+    if borrow { None } else { Some(out) }
+}
+
+pub(crate) fn sub_owned(lhs: BigNum, rhs: BigNum) -> Option<BigNum> {
+    if cmp_lists(&lhs.0, &rhs.0) == Ordering::Less {
         return None;
     }
 
-    let (result, carry) = add_u128(value << 3, value << 1);
-    if carry { None } else { Some(result) }
+    let difference = sub_lsd(reverse(lhs.0), reverse(rhs.0))?;
+    Some(normalize(difference))
+}
+
+fn mul_by_digit(lhs: &Option<Box<Node>>, digit: Digit) -> Option<Box<Node>> {
+    let mut cursor = lhs.as_deref();
+    let mut out = None;
+    let mut carry = Digit::Zero;
+
+    while let Some(node) = cursor {
+        let (units, mul_carry) = node.digit.carrying_mul(digit);
+        let (sum, add_carry) = units.carrying_add(carry, false);
+        let add_digit = if add_carry { Digit::One } else { Digit::Zero };
+        let (next_carry, overflow) = mul_carry.carrying_add(add_digit, false);
+        debug_assert!(!overflow);
+        out = cons(sum, out);
+        carry = next_carry;
+        cursor = node.next.as_deref();
+    }
+
+    cons(carry, out)
+}
+
+fn append_zeros(head: Option<Box<Node>>, count: &Nat) -> Option<Box<Node>> {
+    let mut zeros = None;
+    let mut remaining = count.clone();
+    while !remaining.is_zero() {
+        zeros = cons(Digit::Zero, zeros);
+        remaining = remaining.predecessor();
+    }
+    append_list(head, zeros)
+}
+
+pub(crate) fn mul_owned(lhs: BigNum, rhs: BigNum) -> BigNum {
+    if lhs.is_zero() || rhs.is_zero() {
+        return BigNum::zero();
+    }
+
+    let lhs_lsd = reverse(lhs.0);
+    let mut rhs_lsd = reverse(rhs.0);
+    let mut accumulator = zero_cons();
+    let mut shift = Nat::zero();
+
+    while let Some(node) = rhs_lsd {
+        let Node { digit, next } = *node;
+        rhs_lsd = next;
+
+        let partial = mul_by_digit(&lhs_lsd, digit);
+        let shifted = append_zeros(partial, &shift);
+        accumulator = add_lsd(reverse(accumulator), reverse(shifted));
+        shift = shift.successor();
+    }
+
+    normalize(accumulator)
+}
+
+pub(crate) fn div_rem_owned(dividend: BigNum, divisor: BigNum) -> (BigNum, BigNum) {
+    assert!(!divisor.is_zero(), "attempt to divide by zero");
+
+    let mut quotient = None;
+    let mut remainder = zero_cons();
+    let mut cursor = dividend.0.as_deref();
+
+    while let Some(node) = cursor {
+        let digit = node.digit;
+        cursor = node.next.as_deref();
+
+        if is_zero_list(&remainder) {
+            remainder = cons(digit, None);
+        } else {
+            remainder = append(remainder, digit);
+        }
+
+        let mut quotient_digit = Digit::Zero;
+        while cmp_lists(&remainder, &divisor.0) != Ordering::Less {
+            let reduced = sub_owned(BigNum(remainder.clone()), divisor.clone())
+                .expect("the remainder is at least the divisor");
+            remainder = reduced.0;
+            quotient_digit = quotient_digit.successor();
+        }
+
+        quotient = append(quotient, quotient_digit);
+    }
+
+    (normalize(quotient), normalize(remainder))
+}
+
+pub(crate) fn checked_sub(lhs: &BigNum, rhs: &BigNum) -> Option<BigNum> {
+    sub_owned(lhs.clone(), rhs.clone())
+}
+
+pub(crate) fn div_rem(lhs: &BigNum, rhs: &BigNum) -> (BigNum, BigNum) {
+    div_rem_owned(lhs.clone(), rhs.clone())
 }
 
 impl BigNum {
     /// Zero.
     pub fn zero() -> Self {
-        Self(vec![Digit::Zero])
+        Self(zero_cons())
     }
 
     /// One.
     pub fn one() -> Self {
-        Self(vec![Digit::One])
+        Self(cons(Digit::One, None))
     }
 
     /// Builds a number from decimal digits, most significant first.
     ///
     /// Leading zeroes are discarded. An empty iterator produces zero.
     pub fn from_digits(digits: impl IntoIterator<Item = Digit>) -> Self {
-        Self(normalize_vec(digits.into_iter().collect()))
+        let mut head = None;
+        for digit in digits {
+            head = cons(digit, head);
+        }
+        normalize(reverse(head))
     }
 
-    /// Builds a number from a `u128`.
-    ///
-    /// The conversion walks the primitive's bits from most significant to
-    /// least significant, doubling the decimal digit vector and adding each
-    /// bit. All decimal operations use the digit lookup tables.
+    /// Builds a number from a `u128` through its decimal representation.
     pub fn from_u128(value: u128) -> Self {
-        let mut digits = vec![Digit::Zero];
-
-        for shift in (0..128).rev() {
-            let mut carry = false;
-            for digit in &mut digits {
-                let (sum, next_carry) = digit.carrying_add(*digit, carry);
-                *digit = sum;
-                carry = next_carry;
-            }
-            if carry {
-                digits.push(Digit::One);
-            }
-
-            if (value >> shift) & 1 == 1 {
-                let mut carry = true;
-                for digit in &mut digits {
-                    let (sum, next_carry) = digit.carrying_add(Digit::Zero, carry);
-                    *digit = sum;
-                    carry = next_carry;
-                    if !carry {
-                        break;
-                    }
-                }
-                if carry {
-                    digits.push(Digit::One);
-                }
-            }
-        }
-
-        digits.reverse();
-        Self(normalize_vec(digits))
+        value
+            .to_string()
+            .parse()
+            .expect("every u128 has a decimal representation")
     }
 
     /// The digits, most significant first.
-    pub fn digits(&self) -> &[Digit] {
-        &self.0
+    pub fn digits(&self) -> Digits<'_> {
+        Digits {
+            next: self.0.as_deref(),
+        }
     }
 
     /// Consumes the number and returns its digits, most significant first.
     pub fn into_digits(self) -> Vec<Digit> {
-        self.0
+        self.into_iter().collect()
     }
 
     /// Whether this number is zero.
     pub fn is_zero(&self) -> bool {
-        self.0 == [Digit::Zero]
+        is_zero_list(&self.0)
     }
 
     /// Converts to a `u128`, if the value fits.
-    ///
-    /// The conversion uses shifts and a bit-level full adder; it does not use
-    /// primitive multiplication or addition.
     pub fn to_u128(&self) -> Option<u128> {
-        let mut value = 0u128;
-        for digit in &self.0 {
-            value = mul10(value)?;
-            let (sum, carry) = add_u128(value, u128::from(digit.value()));
-            if carry {
-                return None;
-            }
-            value = sum;
-        }
-        Some(value)
+        self.to_string().parse().ok()
     }
 
     /// Converts to a `u64`, if the value fits.
     pub fn to_u64(&self) -> Option<u64> {
-        self.to_u128()?.try_into().ok()
+        self.to_string().parse().ok()
     }
+
+    pub(crate) fn last_digit(&self) -> Option<Digit> {
+        let mut cursor = self.0.as_deref();
+        let mut last = None;
+        while let Some(node) = cursor {
+            last = Some(node.digit);
+            cursor = node.next.as_deref();
+        }
+        last
+    }
+
+    fn len_nat(&self) -> Nat {
+        let mut count = Nat::zero();
+        let mut cursor = self.0.as_deref();
+        while let Some(node) = cursor {
+            count = count.successor();
+            cursor = node.next.as_deref();
+        }
+        count
+    }
+
+    pub(crate) fn mul_pow10_nat(&self, count: &Nat) -> Self {
+        if self.is_zero() || count.is_zero() {
+            return self.clone();
+        }
+
+        let mut zeros = None;
+        let mut remaining = count.clone();
+        while !remaining.is_zero() {
+            zeros = cons(Digit::Zero, zeros);
+            remaining = remaining.predecessor();
+        }
+
+        Self(append_list(self.0.clone(), zeros))
+    }
+
+    pub(crate) fn div_pow10_nat(&self, count: &Nat) -> Self {
+        let mut head = reverse(self.0.clone());
+        let mut remaining = count.clone();
+
+        while !remaining.is_zero() {
+            match head {
+                Some(node) => {
+                    let Node { next, .. } = *node;
+                    head = next;
+                }
+                None => return Self::zero(),
+            }
+            remaining = remaining.predecessor();
+        }
+
+        normalize(reverse(head))
+    }
+}
+
+/// A borrowing iterator over a [`BigNum`]'s digits, most significant first.
+#[derive(Clone, Copy)]
+pub struct Digits<'a> {
+    next: Option<&'a Node>,
+}
+
+impl Iterator for Digits<'_> {
+    type Item = Digit;
+
+    fn next(&mut self) -> Option<Digit> {
+        let node = self.next?;
+        self.next = node.next.as_deref();
+        Some(node.digit)
+    }
+}
+
+/// An owning iterator over a [`BigNum`]'s digits, most significant first.
+#[derive(Clone)]
+pub struct IntoDigits {
+    next: Option<Box<Node>>,
+}
+
+impl Iterator for IntoDigits {
+    type Item = Digit;
+
+    fn next(&mut self) -> Option<Digit> {
+        let node = self.next.take()?;
+        let Node { digit, next } = *node;
+        self.next = next;
+        Some(digit)
+    }
+}
+
+fn write_repeated(f: &mut fmt::Formatter<'_>, character: char, count: &Nat) -> fmt::Result {
+    let mut remaining = count.clone();
+    while !remaining.is_zero() {
+        f.write_char(character)?;
+        remaining = remaining.predecessor();
+    }
+    Ok(())
 }
 
 impl fmt::Display for BigNum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let width = f.width().unwrap_or(0);
-        let padding = width.saturating_sub(self.0.len());
+        let width = f.width().map(Nat::from_usize).unwrap_or_else(Nat::zero);
+        let length = self.len_nat();
+        let padding = width.saturating_sub(&length);
 
         if f.sign_aware_zero_pad() {
-            for _ in 0..padding {
-                f.write_char('0')?;
-            }
-            for digit in &self.0 {
+            write_repeated(f, '0', &padding)?;
+            for digit in self.digits() {
                 f.write_char(digit.to_char())?;
             }
             return Ok(());
         }
 
         let (before, after) = match f.align().unwrap_or(fmt::Alignment::Right) {
-            fmt::Alignment::Left => (0, padding),
-            fmt::Alignment::Right => (padding, 0),
-            fmt::Alignment::Center => (padding / 2, padding - padding / 2),
+            fmt::Alignment::Left => (Nat::zero(), padding.clone()),
+            fmt::Alignment::Right => (padding.clone(), Nat::zero()),
+            fmt::Alignment::Center => {
+                let (half, _) = padding.div_rem(&Nat::two());
+                let rest = padding.saturating_sub(&half);
+                (half, rest)
+            }
         };
 
-        let fill = f.fill();
-        for _ in 0..before {
-            f.write_char(fill)?;
-        }
-        for digit in &self.0 {
+        write_repeated(f, f.fill(), &before)?;
+        for digit in self.digits() {
             f.write_char(digit.to_char())?;
         }
-        for _ in 0..after {
-            f.write_char(fill)?;
-        }
-        Ok(())
+        write_repeated(f, f.fill(), &after)
     }
 }
 
@@ -256,18 +526,18 @@ impl FromStr for BigNum {
             return Err(ParseBigNumError::Empty);
         }
 
-        let mut digits = Vec::with_capacity(s.len());
+        let mut head = None;
         for c in s.chars() {
             let digit = Digit::from_char(c).ok_or(ParseBigNumError::InvalidCharacter(c))?;
-            digits.push(digit);
+            head = cons(digit, head);
         }
-        Ok(Self(normalize_vec(digits)))
+        Ok(normalize(reverse(head)))
     }
 }
 
 impl Ord for BigNum {
     fn cmp(&self, other: &Self) -> Ordering {
-        cmp_digits(&self.0, &other.0)
+        cmp_lists(&self.0, &other.0)
     }
 }
 
@@ -279,7 +549,7 @@ impl PartialOrd for BigNum {
 
 impl From<Digit> for BigNum {
     fn from(digit: Digit) -> Self {
-        Self(vec![digit])
+        Self(cons(digit, None))
     }
 }
 
@@ -306,7 +576,10 @@ macro_rules! impl_from_unsigned {
         $(
             impl From<$ty> for BigNum {
                 fn from(value: $ty) -> Self {
-                    Self::from_u128(value as u128)
+                    value
+                        .to_string()
+                        .parse()
+                        .expect("every unsigned integer has a decimal representation")
                 }
             }
         )*
@@ -323,40 +596,28 @@ impl FromIterator<Digit> for BigNum {
 
 impl Extend<Digit> for BigNum {
     fn extend<I: IntoIterator<Item = Digit>>(&mut self, iter: I) {
-        self.0.extend(iter);
-        self.0 = normalize_vec(std::mem::take(&mut self.0));
+        for digit in iter {
+            self.0 = append(self.0.take(), digit);
+        }
+        self.0 = normalize(self.0.take()).0;
     }
 }
 
 impl IntoIterator for BigNum {
     type Item = Digit;
-    type IntoIter = std::vec::IntoIter<Digit>;
+    type IntoIter = IntoDigits;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        IntoDigits { next: self.0 }
     }
 }
 
 impl<'a> IntoIterator for &'a BigNum {
-    type Item = &'a Digit;
-    type IntoIter = std::slice::Iter<'a, Digit>;
+    type Item = Digit;
+    type IntoIter = Digits<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
-impl AsRef<[Digit]> for BigNum {
-    fn as_ref(&self) -> &[Digit] {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for BigNum {
-    type Target = [Digit];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        self.digits()
     }
 }
 
@@ -367,13 +628,20 @@ mod tests {
     #[test]
     fn normalization_removes_leading_zeroes() {
         assert_eq!(
-            BigNum::from_digits([Digit::Zero, Digit::Zero, Digit::One, Digit::Two]).digits(),
-            [Digit::One, Digit::Two]
+            BigNum::from_digits([Digit::Zero, Digit::Zero, Digit::One, Digit::Two])
+                .digits()
+                .collect::<Vec<_>>(),
+            vec![Digit::One, Digit::Two]
         );
-        assert_eq!(BigNum::from_digits([]).digits(), [Digit::Zero]);
         assert_eq!(
-            BigNum::from_digits([Digit::Zero, Digit::Zero]).digits(),
-            [Digit::Zero]
+            BigNum::from_digits([]).digits().collect::<Vec<_>>(),
+            vec![Digit::Zero]
+        );
+        assert_eq!(
+            BigNum::from_digits([Digit::Zero, Digit::Zero])
+                .digits()
+                .collect::<Vec<_>>(),
+            vec![Digit::Zero]
         );
     }
 
@@ -453,16 +721,16 @@ mod tests {
                 .unwrap()
                 .into_iter()
                 .collect::<Vec<_>>(),
-            [Digit::Nine, Digit::Eight, Digit::Seven]
+            vec![Digit::Nine, Digit::Eight, Digit::Seven]
         );
         assert_eq!(
-            "12".parse::<BigNum>().unwrap().as_ref(),
-            [Digit::One, Digit::Two]
+            "12".parse::<BigNum>().unwrap().digits().collect::<Vec<_>>(),
+            vec![Digit::One, Digit::Two]
         );
 
         let n: BigNum = "123".parse().unwrap();
-        assert_eq!(n.len(), 3);
-        assert_eq!(n[0], Digit::One);
-        assert_eq!(n.last(), Some(&Digit::Three));
+        assert_eq!(n.digits().count(), 3);
+        assert_eq!(n.digits().next(), Some(Digit::One));
+        assert_eq!(n.digits().last(), Some(Digit::Three));
     }
 }
