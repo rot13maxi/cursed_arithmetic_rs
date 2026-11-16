@@ -38,7 +38,7 @@ use Digit::*;
 /// Addition without an incoming carry.
 ///
 /// Indexed by the two digit values. Each entry is `(result, carry)`.
-const ADD_TABLE: [[(Digit, bool); 10]; 10] = [
+pub(crate) const ADD_TABLE: [[(Digit, bool); 10]; 10] = [
     [
         (Zero, false),
         (One, false),
@@ -164,7 +164,7 @@ const ADD_TABLE: [[(Digit, bool); 10]; 10] = [
 /// Subtraction without an incoming borrow.
 ///
 /// Indexed by the two digit values. Each entry is `(result, borrow)`.
-const SUB_TABLE: [[(Digit, bool); 10]; 10] = [
+pub(crate) const SUB_TABLE: [[(Digit, bool); 10]; 10] = [
     [
         (Zero, false),
         (Nine, true),
@@ -290,7 +290,7 @@ const SUB_TABLE: [[(Digit, bool); 10]; 10] = [
 /// Multiplication without an incoming carry.
 ///
 /// Indexed by the two digit values. Each entry is `(units, carry)`.
-const MUL_TABLE: [[(Digit, Digit); 10]; 10] = [
+pub(crate) const MUL_TABLE: [[(Digit, Digit); 10]; 10] = [
     [
         (Zero, Zero),
         (Zero, Zero),

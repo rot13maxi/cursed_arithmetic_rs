@@ -8,3 +8,16 @@ keywords = ["arbitrary-precision", "bignum", "arithmetic", "cursed"]
 categories = ["mathematics"]
 
 [dependencies]
+
+[dev-dependencies]
+criterion = "0.7"
+num-bigint = "0.4"
+
+[features]
+default = ["simd"]
+simd = []
+
+[[bench]]
+name = "vs_num_bigint"
+harness = false
+required-features = ["simd"]

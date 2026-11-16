@@ -73,6 +73,54 @@ use primitive arithmetic as an independent oracle.
   get `Option` instead.
 - `Shl`/`Shr` operate on decimal digits, not binary bits.
 
+## Performance Considerations
+
+Benchmarks against `num-bigint` (`BigUint`) on identical deterministic inputs
+(Apple Silicon, criterion, 20 samples per case) produced the following. Values
+are per-operation medians; every operation is slower for `BigNum`, and the gap
+grows with size.
+
+| Operation | Digits | BigNum | num-bigint |
+|---|---|---|---|
+| add | 10 | 186 ns | 23 ns |
+| add | 100 | 1.11 µs | 122 ns |
+| add | 1,000 | 7.24 µs | 411 ns |
+| add | 10,000 | 70.5 µs | 1.94 µs |
+| sub | 10 | 201 ns | 25 ns |
+| sub | 100 | 1.11 µs | 121 ns |
+| sub | 1,000 | 8.02 µs | 361 ns |
+| sub | 10,000 | 68.7 µs | 1.67 µs |
+| mul | 10 | 976 ns | 22 ns |
+| mul | 100 | 170 µs | 272 ns |
+| mul | 1,000 | 20.7 ms | 7.02 µs |
+| mul | 10,000 | 1.92 s | 310 µs |
+| div | 10 | 7.75 µs | 96 ns |
+| div | 100 | 671 µs | 975 ns |
+| div | 1,000 | 56.8 ms | 12.7 µs |
+| div | 10,000 | *not benchmarked* | *not benchmarked* |
+
+Division at 10,000 digits was skipped: `BigNum` divides by repeated
+subtraction per quotient digit, and the case does not finish in acceptable
+benchmark time. This is measured behavior of schoolbook long division on enum
+digits — orders of magnitude slower than `num-bigint` across the board, and
+more so as operand width grows.
+
+Per-digit cost here is dominated by table lookups and `Vec` allocation rather
+than ALU throughput: each digit operation is an index into a 10×10 (or
+10×10×2) `const` table instead of a hardware instruction. The default-on
+`simd` feature accelerates add/sub/mul for operands of 32 or more digits via
+a byte-lane path, which is what the wide-dispatch benchmarks above reflect at
+the 100+ digit sizes.
+
+### Reproducing
+
+```sh
+cargo bench --bench vs_num_bigint
+```
+
+Benchmark dependencies (`criterion`, `num-bigint`) are dev-dependencies only;
+they are never compiled into the library itself.
+
 ## Development
 
 ```sh

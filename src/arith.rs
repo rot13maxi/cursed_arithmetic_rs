@@ -10,6 +10,10 @@ use std::ops::{
 };
 
 pub(crate) fn add_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
+    if let Some(wide) = crate::simd::simd_add(lhs, rhs) {
+        return wide;
+    }
+
     let mut out = Vec::with_capacity(lhs.len().max(rhs.len()) + 1);
     let mut lhs_iter = lhs.iter().rev();
     let mut rhs_iter = rhs.iter().rev();
@@ -36,6 +40,10 @@ pub(crate) fn add_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
 pub(crate) fn checked_sub_digits(lhs: &[Digit], rhs: &[Digit]) -> Option<Vec<Digit>> {
     if cmp_digits(lhs, rhs) == Ordering::Less {
         return None;
+    }
+
+    if let Some(wide) = crate::simd::simd_sub(lhs, rhs) {
+        return Some(wide);
     }
 
     let mut out = Vec::with_capacity(lhs.len());
@@ -78,6 +86,10 @@ fn add_digit_at(digits: &mut [Digit], mut index: usize, digit: Digit) {
 pub(crate) fn mul_digits(lhs: &[Digit], rhs: &[Digit]) -> Vec<Digit> {
     if trimmed(lhs).is_empty() || trimmed(rhs).is_empty() {
         return vec![Digit::Zero];
+    }
+
+    if let Some(wide) = crate::simd::simd_mul(lhs, rhs) {
+        return wide;
     }
 
     let mut result = vec![Digit::Zero; lhs.len() + rhs.len() + 1];

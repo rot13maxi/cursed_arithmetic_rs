@@ -63,6 +63,7 @@ mod arith;
 mod big_num;
 mod digit;
 mod extras;
+mod simd;
 
 pub use big_num::{BigNum, ParseBigNumError};
 pub use digit::{Digit, InvalidDigit, ParseDigitError};
